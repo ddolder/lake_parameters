@@ -12,58 +12,63 @@ import requests
 import numpy as np
 import pandas as pd
 import io
+import json
 import os
 import math
 from .app import Lake as app
 from pandas import DataFrame
 from .utils import download
-# from .utils import get_select_lake, get_select_parameter, get_select_bdl, get_select_data, get_select_max
+
+LAKE_FILES = {
+    "utah": ["awqms_utah.csv", "byu_utah.csv"],
+    "salt": ["awqms_salt.csv", "byu_salt.csv"]
+}
 
 @login_required()
 def home(request):
-    select_lake = SelectInput(display_text='Select a Lake',
-                            name='select-lake',
-                            multiple=False,
-                            options=[('Utah Lake','1'), ('Salt Lake','2')],
-                            initial=['Utah Lake']
-                            )
-    select_data = SelectInput(display_text='Select Data',
-                            name='select-data',
-                            multiple=False,
-                            options=[('All','1'), ('AWQMS','2'),('BYU','3')],
-                            initial=['All']
-                            )
-    select_parameter = SelectInput(display_text='Select a Parameter',
-                            name='select-parameter',
-                            multiple=False,
-                            options=[('Chlorophyll-a','1'), ('Dissolved Oxygen','2'),('Phosphate-phosphorus','3'),('Nitrogen','4'),('Magnesium','5'),('Ortho Phosphorus','6'),('pH','7'),('Water Temperature','8'),('Turbidity','9'),('Secchi Disk Depth','10'),('Total Dissolved Solids','11')],
-                            initial=['Chlorophyll-a']
-                            )
-    select_bdl = SelectInput(display_text='Select a value for Data below Detection Limit',
-                            name='select-bdl',
-                            multiple=False,
-                            options=[('0','1'), ('Detection Limit','2'),('1/2 Detection Limit','3')],
-                            initial=['0']
-                            )
-    select_max = SelectInput(display_text='Select a maximum value',
-                            name='select-max',
-                            multiple=False,
-                            options=[('Unlimited','1'), ('<5','2'),('<2','3'),('<1','4')],
-                            initial=['Unlimited']
-                            )
-    get_Stations=getStations()
-    context = {}
-    context['all_coords_stations'] = get_Stations['all_coords_stations']
-    context['all_stations'] = get_Stations['all_stations']
-    context['lake_map'] = get_Stations['lake_map']
-    context['select_lake']=select_lake
-    context['select_data']=select_data
-    context['select_parameter']=select_parameter
-    context['select_bdl']=select_bdl
-    context['select_max']=select_max
-    # print(context)
+    context = {
+    }
     return render(request, 'lake/home.html', context)
 
+@login_required()
+def data(request):
+    select_lake = SelectInput(display_text='Select a Lake',
+                              name='select-lake',
+                              multiple=False,
+                              options=[('',''), ('Utah Lake', 'utah'), ('Great Salt Lake', 'salt')],
+                              initial=['']
+                              )
+    select_data = SelectInput(display_text='Select Data',
+                              name='select-data',
+                              multiple=False,
+                              options=[('',''), ('All', 'all'), ('AWQMS', 'awqms'), ('BYU', 'byu')],
+                              initial=['']
+                              )
+    select_max = SelectInput(display_text='Select a maximum value',
+                                 name='select-max',
+                                 multiple=False,
+                                 options=[('All', '0'), ('4 Stand Deviation', '4'), ('3 Stand Deviation', '3'), ('2 Stand Deviation', '2'), ('1 Stand Deviation', '1')],
+                                 initial=[('All', '0')]
+                                 )
+    select_bdl = SelectInput(display_text='Select a Minimum Limit Value',
+                             name='select-bdl',
+                             multiple=False,
+                             options=[('0', '0'), ('Detection Limit', '1'), ('1/2 Detection Limit', '0.5')],
+                             initial=[('0', '0')]
+                             )
+
+    getstations = getStations('utah')
+    context = {}
+    context['all_coords_stations'] = getstations['all_coords_stations']
+    context['dif_coords_stations'] = getstations['dif_coords_stations']
+    context['all_stations'] = getstations['all_stations']
+    context['lake_map'] = getstations['lake_map']
+    context['select_lake'] = select_lake
+    context['select_data'] = select_data
+    context['select_max'] = select_max
+    context['select_bdl'] = select_bdl
+
+    return render(request, 'lake/data.html', context)
 
 @login_required()
 def instructions(request):
@@ -74,52 +79,116 @@ def instructions(request):
 @login_required()
 def get_lake(request):
     get_data = request.GET
-    lake_name = get_data['lake_name']
-    # print (lake_name)
-    context=lake_name
-    return render(request, HttpResponse(getFiles(), safe=False), context)
+    lake_name = get_data.get('lake_name')
+    context = getStations(lake_name)
+    return JsonResponse(context)
 
-def getFiles():
+@login_required()
+def param_fraction(request):
+    # to get the fraction and the maximum
+    get_data = request.GET
+    lake_name = get_data.get('lake_name')
+    lake_param = get_data.get('lake_param')
+    print (lake_param)
+    print (lake_name)
+    context ={}
+    context['fraction'] = fraction(lake_name,lake_param)
+    return JsonResponse(context)
 
-    # Obtener archivos y separarlos segun lago y organizacion(o los dos juntos)
-    # print(selectlake)
-    app_workspace = app.get_app_workspace()
-    file_path_utah = os.path.join(app_workspace.path, "awqms_utah.csv")
-    file_path_salt = os.path.join(app_workspace.path, "awqms_salt.csv")
-    file_path_byu_utah = os.path.join(app_workspace.path, "byu_utah.csv")
-    file_path_byu_salt = os.path.join(app_workspace.path, "byu_salt.csv")
-    dataLake_awqms_utah = pd.read_csv(file_path_utah)
-    dataLake_awqms_salt = pd.read_csv(file_path_salt)
-    dataLake_byu_utah = pd.read_csv(file_path_byu_utah)
-    dataLake_byu_salt = pd.read_csv(file_path_byu_salt)
-    dataLake_byu_utah['Organization ID'] = 'BYU'
-    dataLake_byu_salt['Organization ID'] = 'BYU'
-    values_awqms_utah = dataLake_awqms_utah[['Activity Start Date', 'Organization ID', 'Monitoring Location ID', 'Monitoring Location Name', 'Monitoring Location Latitude', 'Monitoring Location Longitude', 'Monitoring Location Type', 'Characteristic Name', 'Sample Fraction', 'Result Value', 'Result Unit', 'Detection Condition', 'Detection Limit Value1', 'Detection Limit Unit1']]
-    values_byu_utah = dataLake_byu_utah[['Activity Start Date', 'Organization ID', 'Monitoring Location ID', 'Monitoring Location Name', 'Monitoring Location Latitude', 'Monitoring Location Longitude', 'Monitoring Location Type', 'Characteristic Name', 'Sample Fraction', 'Result Value', 'Result Unit', 'Detection Condition', 'Detection Limit Value1', 'Detection Limit Unit1']]
-    values_awqms_salt = dataLake_awqms_salt[['Activity Start Date', 'Organization ID', 'Monitoring Location ID', 'Monitoring Location Name', 'Monitoring Location Latitude', 'Monitoring Location Longitude', 'Monitoring Location Type', 'Characteristic Name', 'Sample Fraction', 'Result Value', 'Result Unit', 'Detection Condition', 'Detection Limit Value1', 'Detection Limit Unit1']]
-    values_byu_salt = dataLake_byu_salt[['Activity Start Date', 'Organization ID', 'Monitoring Location ID', 'Monitoring Location Name', 'Monitoring Location Latitude', 'Monitoring Location Longitude', 'Monitoring Location Type', 'Characteristic Name', 'Sample Fraction', 'Result Value', 'Result Unit', 'Detection Condition', 'Detection Limit Value1', 'Detection Limit Unit1']]
-    dataLake_all_utah = [values_awqms_utah, values_byu_utah]
-    dataLake_all_salt = [values_awqms_salt, values_byu_salt]
-    dataLake_utah = pd.concat(dataLake_all_utah)
-    dataLake_salt = pd.concat(dataLake_all_salt)
-    # context = {
-            # 'dataLake_salt':dataLake_salt,
-            # 'values_awqms_utah':values_awqms_utah,
-            # 'values_awqms_salt':values_awqms_salt,
-            # 'values_byu_utah':values_byu_utah,
-            # 'values_byu_salt':values_byu_salt,
-            # 'dataLake_utah':dataLake_utah
-        # }
-
-    context = dataLake_utah
+def fraction(lake_name, lake_param):
+    dataLake = getFiles(lake_name).get('all')
+    param = dataLake['Characteristic Name']==lake_param
+    print (param)
+    dataParam = dataLake[param]
+    print(dataParam)
+    dp1 = dataParam['Sample Fraction'] == 'Dissolved'
+    print(dp1)
+    dp = dataParam[dp1]
+    print(dp)
+    if len(dp) > 0:
+        fraction_list = [('',''), ('Total', 'total'), ('Dissolved', 'dissolved')]
+    else:
+        fraction_list = [('','')]
+    select_fraction = SelectInput(display_text='Select Fraction',
+                              name='select-fraction',
+                              multiple=False,
+                              options=fraction_list,
+                              initial=['']
+                              )
+    context=select_fraction
     return context
 
+def lake_parameter(request):
+    # to get the parameters of the lake
+    get_data = request.GET
+    lake_name = get_data.get('lake_name')
+    lake_data = get_data.get('lake_data')
+    print(lake_data)
+    dataLake = getFiles(lake_name).get(lake_data)
+    print(dataLake)
+    chl = {'Chlorophyll a, uncorrected for pheophytin':'Chlorophyll a','Chlorophyll a, corrected for pheophytin':'Chlorophyll a','Chlorophyll a, free of pheophytin':'Chlorophyll a'}
+    dataLake = dataLake.replace(chl)
+    # print(dataLake)
+    parameter_list1 = dataLake['Characteristic Name'].unique()
+    parameter_list1.sort()
+    parameter_list = list(zip(*([parameter_list1] + [parameter_list1])))
+    select_parameter = SelectInput(display_text='Select Parameter',
+                              name='select-parameter',
+                              multiple=False,
+                              options=parameter_list,
+                              initial=['']
+                              )
+    context ={}
+    context['parameter'] = select_parameter
+    return JsonResponse(context)
 
-def getStations():
+@login_required()
+def charact_data(request):
+    get_data = request.GET
+    lake_name = get_data.get('lake_name')
+    lake_data = get_data.get('lake_data')
+    lake_param = get_data.get('lake_param')
+    param_max = get_data.get('param_max')
+    param_fract = get_data.get('param_fract')
+    param_bdl = get_data.get('param_bdl')
+    print (lake_name)
+    # context = {}
+    context = getData(lake_name, lake_data, lake_param, param_fract, param_max, param_bdl)
+    return JsonResponse(context)
+
+def getFiles(lake_name):
+
+    # Obtener archivos y separarlos segun lago y organizacion(o los dos juntos)
+
+    app_workspace = app.get_app_workspace()
+    file_path = os.path.join(app_workspace.path, LAKE_FILES.get(lake_name)[0])
+    file_path_byu = os.path.join(app_workspace.path, LAKE_FILES.get(lake_name)[1])
+
+    dataLake_awqms = pd.read_csv(file_path)
+    dataLake_byu = pd.read_csv(file_path_byu)
+    dataLake_byu['Organization ID'] = 'BYU'
+
+    fields = ['Activity Start Date', 'Organization ID', 'Monitoring Location ID', 'Monitoring Location Name', 'Monitoring Location Latitude', 'Monitoring Location Longitude',
+              'Monitoring Location Type', 'Characteristic Name', 'Sample Fraction', 'Result Value', 'Result Unit', 'Detection Condition', 'Detection Limit Value1', 'Detection Limit Unit1']
+
+    values_awqms = dataLake_awqms[fields]
+    values_byu = dataLake_byu[fields]
+    dataLake_all = [values_awqms, values_byu]
+    dataLake = pd.concat(dataLake_all, ignore_index=True)
+    # print(dataLake)
+    context = {
+        'all': dataLake,
+        'awqms': values_awqms,
+        'byu': values_byu
+    }
+
+    return context
+
+def getStations(lake_name):
 
     # Obtner estaciones segun lago para el mapa de estaciones
 
-    dataLake = getFiles()
+    dataLake = getFiles(lake_name).get('all')
     locations = dataLake['Monitoring Location ID'].unique()
     context = {}
 
@@ -138,64 +207,61 @@ def getStations():
             lat = df['Monitoring Location Latitude'].tolist()[0]
             lon = df['Monitoring Location Longitude'].tolist()[0]
             organization = df['Organization ID'].tolist()[0]
+            in_out_lake = df['Monitoring Location Type'].tolist()[0]
             station = df['Monitoring Location Name'].tolist()[0]
             dataname = str(location)
-            context['all_stations'][dataname] = {'coords': [lat, lon], 'org': organization, 'station': station}
+            context['all_stations'][dataname] = {'coords': [lat, lon], 'org': organization, 'type': in_out_lake,'station': station}
     lats = dataLake['Monitoring Location Latitude'].unique()
     lons = dataLake['Monitoring Location Longitude'].unique()
-    lats_mean = np.mean(lats)
-    lons_mean = np.mean(lons)
-    context['all_coords_stations']=[lats_mean,lons_mean]
+    lats_mean = (np.max(lats)+np.min(lats))/2
+    lons_mean = (np.max(lons)+np.min(lons))/2
+    lats_dif = np.max(lats)-np.min(lats)
+    lons_dif = np.max(lons)-np.min(lons)
+    context['all_coords_stations'] = [lats_mean, lons_mean]
+    context['dif_coords_stations'] = [lats_dif, lons_dif]
     return context
 
-def completeSeries(df):
-
-    # Completar el time series para los graficos
-
-    df['Date'] = pd.to_datetime(df['Activity Start Date'])
-    df = df.sort_values(by = ['Date'])
-    dateslist = df['Date'].tolist()
-    inidate = dateslist[0]
-    findate = dateslist[-1]
-    alldates = []
-    curdate = inidate
-    while curdate <= findate:
-        alldates.append(curdate)
-        curdate = curdate + timedelta(days = 1)
-    df2 = pd.DataFrame(alldates, columns = ['Date'])
-    dfjoin = df2.merge(df, on = 'Date', how = 'left')
-    value = dfjoin['Result Value']
-    dates = dfjoin['Date']
-    datesString=[]
-    valuesNumpy = value.to_numpy(value)
-    valuesNoNan = np.nan_to_num(valuesNumpy, nan=-999)
-    valuesFin = valuesNoNan.tolist()
-    for datesX in dates:
-        datesString.append(str(datesX).split()[0])
-    alldates = datesString
-    return valuesFin, alldates
-
-def getData(characteristic, fraction):
-
+def getData(lake_name, lake_data, lake_param, param_fract, param_max, param_bdl):
     # Obtener datos segun el parametro y su fraccion, mandar datos con el timeseries completo
-
-    dataLake = getFiles()
-    param = dataLake['Characteristic Name'] == characteristic
+    dataLakeAll = getFiles(lake_name).get('all')
+    dataLake = getFiles(lake_name).get(lake_data)
+    chl = {'Chlorophyll a, uncorrected for pheophytin':'Chlorophyll a','Chlorophyll a, corrected for pheophytin':'Chlorophyll a','Chlorophyll a, free of pheophytin':'Chlorophyll a'}
+    dataLake = dataLake.replace(chl)
+    param = dataLake['Characteristic Name'] == lake_param
     row_param = dataLake[param]
-    # check Total-Dissolved
-    fract = row_param[row_param['Sample Fraction'] == fraction]
-    if len(fract) > 0:
-        fract = row_param['Sample Fraction'] == fraction
-        row = row_param[fract]
-        # print(row)
+    # print(row_param)
+
+        # check Total-Dissolved
+    if param_fract == 'Dissolved' or param_fract == 'Total':
+        fract = row_param['Sample Fraction'] == param_fract
+        row_all = row_param[fract]
     else:
-        row = row_param
+        row_all = row_param
+
+    stan_dev = np.std(row_all['Result Value'])
+    mean = np.mean(row_all['Result Value'])
+    print(stan_dev)
+    print(mean)
+    if param_max != '0':
+        m=float(param_max)
+        y=mean+(stan_dev*m)
+        print (y)
+        maxim = row_all['Result Value'] <= y
+        row = row_all[maxim]
+    else:
+        row = row_all
+
+        # Add values to the No Detected, acording the selected bdl
+    x=float(param_bdl)
+    row['DeLiVal']=row['Detection Limit Value1']*x
+    row['Result Value'].fillna(row['DeLiVal'], inplace=True)
 
     locations = row['Monitoring Location ID'].unique()
     unit = row['Result Unit'].unique()
+    unit = ''.join(unit)
     context = {}
-    context['characteristic'] = characteristic
-    context['fraction'] = fraction
+    context['characteristic'] = lake_param
+    #context['fraction'] = fraction
     context['unit'] = unit
     context['csvLake'] = dataLake
 
@@ -214,7 +280,8 @@ def getData(characteristic, fraction):
             lat = df['Monitoring Location Latitude'].tolist()[0]
             lon = df['Monitoring Location Longitude'].tolist()[0]
             organization = df['Organization ID'].tolist()[0]
-
+            in_out_lake = df['Monitoring Location Type'].tolist()[0]
+            station = df['Monitoring Location Name'].tolist()[0]
             dataname = str(location)
             charac_id = row['Monitoring Location ID'] == location
             charac = row[charac_id]
@@ -223,145 +290,30 @@ def getData(characteristic, fraction):
             responseObject['values'] = valuesFin
             responseObject['dates'] = alldates
             # print(responseObject)
-            context['all_data'][dataname] = {'coords': [lat, lon], 'org': organization, 'data': responseObject}
-    lats = dataLake['Monitoring Location Latitude'].unique()
-    lons = dataLake['Monitoring Location Longitude'].unique()
-    lats_mean = np.mean(lats)
-    lons_mean = np.mean(lons)
-    context['all_coords']=[lats_mean,lons_mean]
+            context['all_data'][dataname] = {'coords': [lat, lon], 'org': organization, 'type': in_out_lake, 'station': station, 'data': responseObject}
+    lats = dataLakeAll['Monitoring Location Latitude'].unique()
+    lons = dataLakeAll['Monitoring Location Longitude'].unique()
+    lats_mean = (np.max(lats)+np.min(lats))/2
+    lons_mean = (np.max(lons)+np.min(lons))/2
+    lats_dif = np.max(lats)-np.min(lats)
+    lons_dif = np.max(lons)-np.min(lons)
+    context['all_coords_stations'] = [lats_mean, lons_mean]
+    context['dif_coords_stations'] = [lats_dif, lons_dif]
     return context
 
+def completeSeries(df):
 
-# def charts(request):
-#     timeseries_plot = TimeSeries(
-#         height='500px',
-#         width='500px',
-#         engine='highcharts',
-#         title='Irregular Timeseries Plot',
-#         y_axis_title='Snow depth',
-#         y_axis_units='m',
-#         series=[{
-#             'name': 'Winter 2007-2008',
-#             'data': [
-#                 [datetime(2008, 12, 2), 0.8],
-#                 [datetime(2008, 12, 9), 0.6],
-#                 [datetime(2008, 12, 16), 0.6]
-#             ]
-#         }]
-#     )
-#
-#     context = {
-#                 'timeseries_plot': timeseries_plot,
-#               }
+    # Completar el time series para los graficos
+    df['Date'] = pd.to_datetime(df['Activity Start Date'])
 
-def chl_a(request):
-    context = getData('Chlorophyll a, uncorrected for pheophytin',' ')
-    download_button = download()
+    value = df['Result Value']
+    dates = df['Date']
 
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def do(request):
-    context = getData('Dissolved oxygen (DO)',' ')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def magn_total(request):
-    context = getData('Magnesium','Total')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def magn_dis(request):
-    context = getData('Magnesium','Dissolved')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def nit_total(request):
-    context = getData('Nitrogen','Total')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def nit_dis(request):
-    context = getData('Nitrogen','Dissolved')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def ph(request):
-    context = getData('pH',' ')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def phosp_total(request):
-    context = getData('Phosphate-phosphorus','Total')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def phosp_dis(request):
-    context = getData('Phosphate-phosphorus','Dissolved')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def water_temp(request):
-    context = getData('Temperature, water',' ')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def tds(request):
-    context = getData('Total dissolved solids','None')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def turb(request):
-    context = getData('Turbidity',' ')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def secchi(request):
-    context = getData('Depth, Secchi disk depth',' ')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
-
-def ortho(request):
-    context = getData('Ortho Phosphorus','None')
-    download_button = download()
-
-    context['download_button'] = download_button
-
-    return render(request, 'lake/show_data.html', context)
+    datesString = []
+    valuesNumpy = value.to_numpy(value)
+    valuesNoNan = np.nan_to_num(valuesNumpy, nan=-999)
+    valuesFin = valuesNoNan.tolist()
+    for datesX in dates:
+        datesString.append(str(datesX).split()[0])
+    alldates = datesString
+    return valuesFin, alldates
